@@ -1,0 +1,11 @@
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+# AI assistants
+.cursor/
+.claude/
+.agent/
+CLAUDE.md
