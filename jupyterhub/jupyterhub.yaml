@@ -1,0 +1,404 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# you may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+apiVersion: v1alpha1
+name: jupyterhub
+tag: 0.7.0
+protected: false
+description: |
+  JupyterHub - Multi-user interactive development environment for data science and machine learning.
+  Provides secure, scalable Jupyter notebook access with integrated OIDC authentication and
+  resource management.
+usage:
+  text: |
+    JupyterHub provides multi-user Jupyter notebook environment with OIDC authentication.
+    Access the hub at https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
+schema:
+  parameters:
+    properties:
+      allowedRoles:
+        type: string
+        default: "admins"
+        description: "Allowed roles for JupyterHub access"
+        title: "Authentication | Allowed Roles | | order:1 columns:2 placeholder:e.g. admins, data-team"
+      authProvider:
+        type: string
+        default: "oidc"
+        description: "Authentication provider"
+        title: "Authentication | Auth Provider | | order:2"
+        enum: ["oidc", "ldap", "basic"]
+      sessionTimeoutMinutes:
+        type: integer
+        default: 480
+        description: "Session timeout in minutes (0 = no timeout)"
+        title: "Authentication | Session Timeout | stepper | order:3 advanced:true"
+        minimum: 0
+        maximum: 10080
+      profiles:
+        type: array
+        items:
+          type: object
+          properties:
+            type: { type: string }
+            image: { type: string }
+            cpuRequest: { type: number }
+            cpuLimit: { type: number }
+            memoryRequestGi: { type: number }
+            memoryLimitGi: { type: number }
+            gpuEnabled: { type: boolean }
+            gpuCount: { type: integer }
+        description: "User-facing profiles for this JupyterHub instance"
+        title: "Profiles | Profiles | profile-editor | order:1"
+      storageSize:
+        type: string
+        default: "10Gi"
+        description: "Persistent storage size per user"
+        title: "Storage | Storage Size | | order:1 columns:2 placeholder:e.g. 10Gi, 50Gi"
+      storageClass:
+        type: string
+        default: ""
+        description: "Kubernetes StorageClass (empty = cluster default)"
+        title: "Storage | Storage Class | | order:2 placeholder:e.g. standard, gp3"
+      enableSharedVolume:
+        type: boolean
+        default: false
+        description: "Mount a shared volume across all user pods"
+        title: "Storage | Shared Volume | | order:3"
+      sharedVolumePath:
+        type: string
+        default: "/shared"
+        description: "Mount path for the shared volume"
+        title: "Storage | Shared Volume Path | | order:4 condition:enableSharedVolume=true"
+      sharedVolumeSize:
+        type: string
+        default: "50Gi"
+        description: "Size of the shared volume"
+        title: "Storage | Shared Volume Size | | order:5 condition:enableSharedVolume=true placeholder:e.g. 50Gi"
+      enableNetworkPolicies:
+        type: boolean
+        default: true
+        description: "Apply network policies to restrict pod-to-pod traffic"
+        title: "Networking | Network Policies | | order:1 advanced:true"
+      proxyReadTimeout:
+        type: integer
+        default: 300
+        description: "Ingress proxy read timeout (seconds)"
+        title: "Networking | Proxy Read Timeout | stepper | order:2 advanced:true"
+        minimum: 30
+        maximum: 3600
+      proxySendTimeout:
+        type: integer
+        default: 300
+        description: "Ingress proxy send timeout (seconds)"
+        title: "Networking | Proxy Send Timeout | stepper | order:3 advanced:true"
+        minimum: 30
+        maximum: 3600
+      maxUploadSizeMb:
+        type: integer
+        default: 128
+        description: "Maximum file upload size (MB)"
+        title: "Networking | Max Upload Size | stepper | order:4 advanced:true"
+        minimum: 1
+        maximum: 10240
+      hubCpuRequest:
+        type: string
+        default: "200m"
+        description: "Hub pod CPU request (K8s resource string)"
+        title: "Resources | Hub CPU Request | | order:1 columns:2 advanced:true placeholder:e.g. 200m, 1"
+      hubCpuLimit:
+        type: string
+        default: "1000m"
+        description: "Hub pod CPU limit (K8s resource string)"
+        title: "Resources | Hub CPU Limit | | order:2 columns:2 advanced:true placeholder:e.g. 1000m, 2"
+      hubMemoryRequest:
+        type: string
+        default: "512Mi"
+        description: "Hub pod memory request (K8s resource string)"
+        title: "Resources | Hub Memory Request | | order:3 columns:2 advanced:true placeholder:e.g. 512Mi, 1Gi"
+      hubMemoryLimit:
+        type: string
+        default: "1Gi"
+        description: "Hub pod memory limit (K8s resource string)"
+        title: "Resources | Hub Memory Limit | | order:4 columns:2 advanced:true placeholder:e.g. 1Gi, 2Gi"
+      proxyCpuRequest:
+        type: string
+        default: "100m"
+        description: "Proxy pod CPU request (K8s resource string)"
+        title: "Resources | Proxy CPU Request | | order:5 columns:2 advanced:true placeholder:e.g. 100m"
+      proxyCpuLimit:
+        type: string
+        default: "500m"
+        description: "Proxy pod CPU limit (K8s resource string)"
+        title: "Resources | Proxy CPU Limit | | order:6 columns:2 advanced:true placeholder:e.g. 500m, 1"
+      proxyMemoryRequest:
+        type: string
+        default: "128Mi"
+        description: "Proxy pod memory request (K8s resource string)"
+        title: "Resources | Proxy Memory Request | | order:7 columns:2 advanced:true placeholder:e.g. 128Mi, 256Mi"
+      proxyMemoryLimit:
+        type: string
+        default: "512Mi"
+        description: "Proxy pod memory limit (K8s resource string)"
+        title: "Resources | Proxy Memory Limit | | order:8 columns:2 advanced:true placeholder:e.g. 512Mi, 1Gi"
+  context:
+    properties:
+      certificateIssuers:
+        required: true
+        properties:
+          selfSigned:
+            properties:
+              name: { type: string, required: true }
+      ingress:
+        required: true
+        properties:
+          suffix: { type: string, required: true }
+      storageClass:
+        required: true
+        properties:
+          workspace: { type: string, required: true }
+      kubauth:
+        required: true
+        properties:
+          namespace: { type: string, required: true }
+      jupyter:
+        required: true
+        properties:
+          profiles:
+            properties:
+              jupyterlab:
+                properties:
+                  images:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        label: { type: string }
+                        image: { type: string }
+              vscode:
+                properties:
+                  images:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        label: { type: string }
+                        image: { type: string }
+              rstudio:
+                properties:
+                  images:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        label: { type: string }
+                        image: { type: string }
+          auth:
+            required: true
+            properties:
+              oidc:
+                required: true
+                properties:
+                  authorizeUrl: { type: string, required: true }
+                  tokenUrl: { type: string, required: true }
+                  userinfoUrl: { type: string, required: true }
+                  scope: { type: string, default: "openid profile groups" }
+                  insecureSkipVerify: { type: boolean, default: false }
+modules:
+  - name: oidc
+    source:
+      local:
+        path: oidc
+    values: |
+      clientName: "{{ .Release.metadata.name }}"
+      oidcNamespace: "{{ .Context.kubauth.namespace }}"
+      credentialsSecretName: "{{ .Release.metadata.name }}-oidc-creds"
+      clientIdKey: "client_id"
+      clientSecretKey: "client_secret"
+      redirectURIs:
+        - "https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}/hub/oauth_callback"
+      displayName: "JupyterHub ({{ .Release.metadata.name }})"
+      description: "OIDC client for JupyterHub {{ .Release.metadata.name }}"
+
+  - name: main
+    timeout: 10m
+    source:
+      helmRepository:
+        url: https://hub.jupyter.org/helm-chart/
+        chart: jupyterhub
+        version: 4.3.1
+    values: |
+      {{- $jupyterHost := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
+      {{- $jupyterUrl := printf "https://%s" $jupyterHost -}}
+      {{- $authorizeUrl := .Context.jupyter.auth.oidc.authorizeUrl | replace "{{ .Context.ingress.suffix }}" .Context.ingress.suffix -}}
+      {{- $tokenUrl := .Context.jupyter.auth.oidc.tokenUrl | replace "{{ .Context.ingress.suffix }}" .Context.ingress.suffix -}}
+      {{- $userinfoUrl := .Context.jupyter.auth.oidc.userinfoUrl | replace "{{ .Context.ingress.suffix }}" .Context.ingress.suffix -}}
+
+      fullnameOverride: "{{ .Release.metadata.name }}"
+      nameOverride: "{{ .Release.metadata.name }}"
+
+      hub:
+        resources:
+          requests:
+            cpu: "{{ .Parameters.hubCpuRequest }}"
+            memory: "{{ .Parameters.hubMemoryRequest }}"
+          limits:
+            cpu: "{{ .Parameters.hubCpuLimit }}"
+            memory: "{{ .Parameters.hubMemoryLimit }}"
+        extraEnv:
+          OAUTH_CLIENT_ID:
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.metadata.name }}-oidc-creds
+                key: client_id
+          OAUTH_CLIENT_SECRET:
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.metadata.name }}-oidc-creds
+                key: client_secret
+        config:
+          Authenticator:
+            auto_login: true
+          GenericOAuthenticator:
+            oauth_callback_url: {{ $jupyterUrl }}/hub/oauth_callback
+            authorize_url: {{ $authorizeUrl }}
+            token_url: {{ $tokenUrl }}
+            userdata_url: {{ $userinfoUrl }}
+            validate_server_cert: {{ ternary false true .Context.jupyter.auth.oidc.insecureSkipVerify }}
+            login_service: oidc
+            claim_groups_key: groups
+            manage_groups: true
+            userdata_params:
+              state: state
+            admin_groups:
+              - "{{ .Parameters.allowedRoles }}"
+            allowed_groups:
+              - "{{ .Parameters.allowedRoles }}"
+            username_key: sub
+            scope:
+            {{- range (splitList " " .Context.jupyter.auth.oidc.scope) }}
+            - {{ . }}
+            {{- end }}
+          JupyterHub:
+            authenticator_class: generic-oauth
+        networkPolicy:
+          enabled: false
+        extraConfig:
+          extraConfig01.py: |
+            c.KubeSpawner.delete_grace_period = 120
+            c.KubeSpawner.args = ['--allow-root']
+        image:
+          pullPolicy: Always
+          pullSecrets: []
+          name: quay.io/jupyterhub/k8s-hub
+          tag: "4.3.1"
+        db:
+          type: sqlite-pvc
+          pvc:
+            storage: 1Gi
+            storageClassName: "{{ .Context.storageClass.workspace }}"
+
+      rbac:
+        create: true
+
+      cull:
+        enabled: false
+
+      proxy:
+        service:
+          type: ClusterIP
+        chp:
+          resources:
+            requests:
+              cpu: "{{ .Parameters.proxyCpuRequest }}"
+              memory: "{{ .Parameters.proxyMemoryRequest }}"
+            limits:
+              cpu: "{{ .Parameters.proxyCpuLimit }}"
+              memory: "{{ .Parameters.proxyMemoryLimit }}"
+
+      ingress:
+        enabled: true
+        annotations:
+          nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+          cert-manager.io/cluster-issuer: "{{ .Context.certificateIssuers.selfSigned.name }}"
+        ingressClassName: nginx
+        hosts:
+          - {{ $jupyterHost }}
+        tls:
+          - secretName: {{ .Release.metadata.name }}-tls
+            hosts:
+              - {{ $jupyterHost }}
+
+      scheduling:
+        userScheduler:
+          enabled: false
+        userPlaceholder:
+          enabled: false
+
+      singleuser:
+        podNameTemplate: "{{ .Release.metadata.name }}-{username}{servername}"
+
+        startTimeout: 600
+
+        profileList:
+          {{- range .Parameters.profiles }}
+          - display_name: "{{ .type }} - {{ .image }}"
+            kubespawner_override:
+              image: "{{ .image }}"
+              cpu_guarantee: {{ .cpuRequest }}
+              cpu_limit: {{ .cpuLimit }}
+              mem_guarantee: "{{ .memoryRequestGi }}G"
+              mem_limit: "{{ .memoryLimitGi }}G"
+              {{- if .gpuEnabled }}
+              extra_resource_limits:
+                nvidia.com/gpu: "{{ .gpuCount }}"
+              {{- end }}
+          {{- end }}
+
+        storage:
+          homeMountPath: "/home/{username}"
+          dynamic:
+            storageClass: "{{ .Context.storageClass.workspace }}"
+            pvcNameTemplate: "{{ .Release.metadata.name }}-claim-{username}{servername}"
+            volumeNameTemplate: "{{ .Release.metadata.name }}-volume-{username}{servername}"
+          type: dynamic
+        cloudMetadata:
+          blockWithIptables: false
+        uid: 0
+        fsGid: 0
+        extraEnv:
+          NB_USER: "$(JUPYTERHUB_USER)"
+          NB_UID: "1001"
+          NB_GID: "100"
+          CHOWN_HOME: "yes"
+          CHOWN_HOME_OPTS: "-R"
+          JUPYTER_ENABLE_LAB: "yes"
+          EDITOR: "vim"
+          GIT_SSL_NO_VERIFY: "false"
+        extraPodConfig:
+          automount_service_account_token: false
+          terminationGracePeriodSeconds: 120
+        networkPolicy:
+          enabled: false
+      prePuller:
+        hook:
+          enabled: false
+        continuous:
+          enabled: false
+
+roles:
+  - notebooks
+dependencies:
+  - ingress

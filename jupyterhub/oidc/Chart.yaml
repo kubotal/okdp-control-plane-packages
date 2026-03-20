@@ -1,0 +1,5 @@
+apiVersion: v2
+name: oidc-client
+description: Creates OidcClient CR and credentials Secret for OIDC-enabled services
+type: application
+version: 0.1.0
