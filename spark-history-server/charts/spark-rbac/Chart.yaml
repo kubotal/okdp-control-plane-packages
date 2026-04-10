@@ -1,0 +1,5 @@
+apiVersion: v2
+name: spark-rbac
+description: ServiceAccount and RBAC for Spark driver/executor pods
+type: application
+version: 0.2.0

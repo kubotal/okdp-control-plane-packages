@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-web-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-web-proxy
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-web-proxy
+    spec:
+      terminationGracePeriodSeconds: 5
+      serviceAccountName: {{ .Release.Name }}-web-proxy
+      containers:
+        - name: web-proxy
+          image: {{ .Values.image }}
+          args: ["--config", "/etc/okdp/spark-web-proxy/config.yaml"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/okdp/spark-web-proxy/config.yaml
+              subPath: config.yaml
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-web-proxy-config

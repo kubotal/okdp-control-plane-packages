@@ -1,0 +1,264 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# you may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+apiVersion: v1alpha1
+name: spark-history-server
+tag: 0.18.0
+protected: false
+description: |
+  Spark History Server with OIDC authentication and Web Proxy for live job monitoring.
+  Uses OKDP Spark images with pre-installed auth filter.
+usage:
+  text: |
+    Spark History Server is available at https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
+schema:
+  parameters:
+    properties:
+      storageType:
+        type: string
+        default: "pvc"
+        description: "Storage backend for Spark event logs"
+        title: "Storage | Storage Type | | order:1"
+        enum: ["pvc", "s3"]
+      storageSize:
+        type: string
+        default: "5Gi"
+        description: "PVC size for event logs"
+        title: "Storage | PVC Size | | order:2 condition:storageType=pvc placeholder:e.g. 5Gi, 20Gi"
+      eventLogDir:
+        type: string
+        default: "file:///mnt/spark-events"
+        description: "Event log directory path"
+        title: "Storage | Event Log Directory | | order:3"
+      s3Endpoint:
+        type: string
+        default: ""
+        description: "S3-compatible endpoint URL"
+        title: "Storage | S3 Endpoint | | order:4 condition:storageType=s3 placeholder:e.g. http://minio:9000"
+      s3Bucket:
+        type: string
+        default: ""
+        description: "S3 bucket name"
+        title: "Storage | S3 Bucket | | order:5 condition:storageType=s3 placeholder:e.g. spark-events"
+      s3Prefix:
+        type: string
+        default: ""
+        description: "S3 key prefix"
+        title: "Storage | S3 Prefix | | order:6 condition:storageType=s3 placeholder:e.g. logs/"
+      resourceMemory:
+        type: string
+        default: "1Gi"
+        description: "Memory limit"
+        title: "Resources | Memory | | order:1 advanced:true placeholder:e.g. 1Gi, 2Gi"
+      resourceCpu:
+        type: string
+        default: "500m"
+        description: "CPU limit"
+        title: "Resources | CPU | | order:2 advanced:true placeholder:e.g. 500m, 1"
+  context:
+    properties:
+      certificateIssuers:
+        required: true
+        properties:
+          selfSigned:
+            properties:
+              name: { type: string, required: true }
+      ingress:
+        required: true
+        properties:
+          suffix: { type: string, required: true }
+      storageClass:
+        required: true
+        properties:
+          workspace: { type: string, required: true }
+      kubauth:
+        required: true
+        properties:
+          namespace: { type: string, required: true }
+      sparkOperator:
+        required: true
+        properties:
+          spark:
+            properties:
+              historyServer:
+                properties:
+                  image: { type: string }
+              auth:
+                properties:
+                  issuerUri: { type: string }
+                  scope: { type: string }
+                  cookieEncryptionKey: { type: string }
+              webProxy:
+                properties:
+                  image: { type: string }
+                  tag: { type: string }
+modules:
+  - name: spark-rbac
+    source:
+      local:
+        path: charts/spark-rbac
+    values: |
+      serviceAccountName: spark
+
+  - name: oidc
+    source:
+      local:
+        path: charts/oidc
+    values: |
+      clientName: "{{ .Release.metadata.name }}"
+      oidcNamespace: "{{ .Context.kubauth.namespace }}"
+      credentialsSecretName: "{{ .Release.metadata.name }}-oidc-creds"
+      clientIdKey: "client_id"
+      clientSecretKey: "client_secret"
+      redirectURIs:
+        - "https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}/"
+      displayName: "Spark History Server ({{ .Release.metadata.name }})"
+      description: "OIDC client for Spark History Server {{ .Release.metadata.name }}"
+
+  - name: history-server
+    timeout: 10m
+    source:
+      local:
+        path: charts/spark-history-server
+    values: |
+      {{- $host := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
+      {{- $issuerUri := .Context.sparkOperator.spark.auth.issuerUri | replace "{{ .Context.ingress.suffix }}" .Context.ingress.suffix -}}
+
+      image: "{{ .Context.sparkOperator.spark.historyServer.image }}"
+
+      oidcDiscoveryUrl: "{{ $issuerUri }}/.well-known/openid-configuration"
+
+      config:
+        spark.history.provider: "org.apache.spark.deploy.history.FsHistoryProvider"
+        spark.history.fs.logDirectory: "{{ .Parameters.eventLogDir }}"
+        spark.history.retainedApplications: 50
+        spark.history.fs.update.interval: "10s"
+        spark.history.ui.port: 18080
+        spark.ui.filters: "io.okdp.spark.authc.OidcAuthFilter"
+        {{- if eq .Parameters.storageType "s3" }}
+        spark.hadoop.fs.s3a.endpoint: "{{ .Parameters.s3Endpoint }}"
+        spark.hadoop.fs.s3a.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
+        spark.hadoop.fs.s3a.path.style.access: "true"
+        {{- end }}
+
+      envs:
+        - name: JAVA_TOOL_OPTIONS
+          value: "-Djavax.net.ssl.trustStore=/etc/ssl/certs/truststore.p12 -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword="
+        - name: AUTH_ISSUER_URI
+          value: "{{ $issuerUri }}"
+        - name: AUTH_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.metadata.name }}-oidc-creds
+              key: client_id
+        - name: AUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.metadata.name }}-oidc-creds
+              key: client_secret
+        - name: AUTH_REDIRECT_URI
+          value: "https://{{ $host }}/"
+        - name: AUTH_SCOPE
+          value: "openid profile email groups"
+        - name: AUTH_COOKIE_ENCRYPTION_KEY
+          value: "{{ .Context.sparkOperator.spark.auth.cookieEncryptionKey }}"
+        - name: AUTH_USE_IDTOKEN
+          value: "true"
+        - name: AUTH_COOKE_IS_SECURE
+          value: "true"
+        - name: AUTH_USER_ID
+          value: "email"
+
+      port: 18080
+
+      resources:
+        limits:
+          cpu: "{{ .Parameters.resourceCpu }}"
+          memory: "{{ .Parameters.resourceMemory }}"
+        requests:
+          cpu: "250m"
+          memory: "512Mi"
+
+      {{- if eq .Parameters.storageType "pvc" }}
+      persistence:
+        claimName: "{{ .Release.metadata.name }}-events"
+        storageClass: "{{ .Context.storageClass.workspace }}"
+        size: "{{ .Parameters.storageSize }}"
+      {{- end }}
+
+      volumes:
+        - name: truststore
+          secret:
+            secretName: certs-bundle
+            items:
+              - key: bundle.p12
+                path: truststore.p12
+      {{- if eq .Parameters.storageType "pvc" }}
+        - name: spark-events
+          persistentVolumeClaim:
+            claimName: "{{ .Release.metadata.name }}-events"
+      {{- end }}
+
+      volumeMounts:
+        - name: truststore
+          mountPath: /etc/ssl/certs/truststore.p12
+          subPath: truststore.p12
+          readOnly: true
+      {{- if eq .Parameters.storageType "pvc" }}
+        - name: spark-events
+          mountPath: /mnt/spark-events
+      {{- end }}
+
+
+  - name: web-proxy
+    timeout: 5m
+    source:
+      local:
+        path: charts/spark-web-proxy
+    values: |
+      {{- $host := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
+
+      image: "{{ .Context.sparkOperator.spark.webProxy.image }}:{{ .Context.sparkOperator.spark.webProxy.tag }}"
+
+      jobNamespace: "{{ .Release.spec.targetNamespace }}"
+
+      configuration:
+        proxy:
+          listenAddress: 0.0.0.0
+          port: 4040
+          mode: release
+        spark:
+          history:
+            scheme: http
+            service: "{{ .Release.metadata.name }}-history-server"
+            port: 18080
+          ui:
+            proxyBase: /proxy
+          jobNamespaces:
+            - "{{ .Release.spec.targetNamespace }}"
+        logging:
+          level: "info"
+          format: "console"
+
+      ingress:
+        host: "{{ $host }}"
+        clusterIssuer: "{{ .Context.certificateIssuers.selfSigned.name }}"
+        tlsSecretName: "{{ .Release.metadata.name }}-tls"
+
+roles:
+  - data-processing
+dependencies:
+  - ingress

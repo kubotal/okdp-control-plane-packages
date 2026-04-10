@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-web-proxy
+---
+{{- if .Values.jobNamespace }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-web-proxy
+  namespace: {{ .Values.jobNamespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-web-proxy
+  namespace: {{ .Values.jobNamespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-web-proxy
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Release.Name }}-web-proxy
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

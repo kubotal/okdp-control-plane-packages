@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  history-server.conf: |
+    {{- toYaml .Values.config | nindent 4 }}
+  log4j2.properties: |
+    rootLogger.level = {{ .Values.logLevel }}
+    rootLogger.appenderRef.stdout.ref = console
+    appender.console.type = Console
+    appender.console.name = console
+    appender.console.target = SYSTEM_ERR
+    appender.console.layout.type = PatternLayout
+    appender.console.layout.pattern = %d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n%ex

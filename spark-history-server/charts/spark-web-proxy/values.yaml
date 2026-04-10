@@ -1,0 +1,8 @@
+image: ""
+configuration: {}
+port: 4040
+jobNamespace: ""
+ingress:
+  host: ""
+  clusterIssuer: ""
+  tlsSecretName: ""

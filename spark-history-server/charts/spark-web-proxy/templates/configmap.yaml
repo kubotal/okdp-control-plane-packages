@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-web-proxy-config
+data:
+  config.yaml: |-
+    {{ .Values.configuration | toYaml | nindent 4 }}

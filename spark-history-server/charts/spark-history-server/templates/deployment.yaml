@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | trunc 63 }}
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if .Values.oidcDiscoveryUrl }}
+      initContainers:
+        - name: wait-for-oidc
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until wget -q -O /dev/null --no-check-certificate "{{ .Values.oidcDiscoveryUrl }}" 2>/dev/null; do
+                echo "Waiting for OIDC provider at {{ .Values.oidcDiscoveryUrl }}..."
+                sleep 3
+              done
+              echo "OIDC provider reachable."
+      {{- end }}
+      containers:
+        - name: history-server
+          image: {{ .Values.image }}
+          securityContext:
+            runAsUser: 185
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.envs }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - containerPort: {{ .Values.port }}
+              name: http
+          command:
+            - sh
+            - -c
+            - /usr/bin/tini -s -- /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer --properties-file /opt/spark/conf/history-server.conf
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /opt/spark/conf
+            {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-config
+        {{- with .Values.volumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
