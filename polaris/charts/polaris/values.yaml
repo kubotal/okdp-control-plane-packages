@@ -1,6 +1,7 @@
 image: ""
 port: 8181
 catalogName: ""
+realm: "POLARIS"
 s3:
   bucket: ""
   endpoint: ""

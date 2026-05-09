@@ -16,11 +16,12 @@
 
 apiVersion: v1alpha1
 name: superset
-tag: 0.1.0
+tag: 0.2.0
 protected: false
 description: |
   Apache Superset BI platform with OIDC authentication via Kubauth (Flask-AppBuilder OAuth).
-  Wraps the upstream Superset Helm chart and pre-wires the OIDC client.
+  Aligned with okdp-sandbox/foundation: load_examples toggle, feature flags
+  (DASHBOARD_RBAC, EMBEDDED_SUPERSET, etc), 8h session, full ProxyFix config.
 usage:
   text: |
     Superset is available at https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
@@ -32,6 +33,11 @@ schema:
         default: "admin"
         description: "Initial admin username (created on bootstrap)"
         title: "Admin | Username | | order:1"
+      loadExamples:
+        type: boolean
+        default: false
+        description: "Load the Superset example datasets and dashboards (adds ~3min to deploy)"
+        title: "Data | Load Examples | | order:1"
       memory:
         type: string
         default: "2Gi"
@@ -112,6 +118,36 @@ modules:
           username: "{{ .Parameters.adminUser }}"
 
       configOverrides:
+        # Long-running session + Flask-level extras (sandbox parity).
+        extra_config: |
+          from datetime import timedelta
+          # Sandbox parity: 8h session lifetime (vs default 31d) — short enough
+          # that revoked kubauth users lose access by next-day, long enough not
+          # to nag analysts mid-day.
+          PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
+          # Sandbox parity: explicit ProxyFix tuple — without these counts the
+          # default of x_for=1 still mostly works but breaks under nested
+          # ingress (e.g. an external LB in front of nginx-ingress).
+          PROXY_FIX_CONFIG = {
+            "x_for": 1,
+            "x_proto": 1,
+            "x_host": 1,
+            "x_port": 1,
+            "x_prefix": 1,
+          }
+        # Feature flags from okdp-sandbox/foundation. Enables RBAC on dashboards
+        # (per-dashboard ACL), embedded mode (cross-origin /embedded routes),
+        # native filters UI, cross-filter linking, Jinja templates in SQL.
+        # https://github.com/apache/superset/blob/master/RESOURCES/FEATURE_FLAGS.md
+        feature_flags: |
+          FEATURE_FLAGS = {
+            "DASHBOARD_RBAC": True,
+            "EMBEDDED_SUPERSET": True,
+            "EMBEDDABLE_CHARTS": True,
+            "ENABLE_TEMPLATE_PROCESSING": True,
+            "DASHBOARD_NATIVE_FILTERS": True,
+            "DASHBOARD_CROSS_FILTERS": True,
+          }
         oauth: |
           from flask_appbuilder.security.manager import AUTH_OAUTH
           from superset.security import SupersetSecurityManager
@@ -130,6 +166,7 @@ modules:
           # Default role for users whose kubauth groups don't match anything in
           # AUTH_ROLES_MAPPING. Public has no perms by design.
           AUTH_USER_REGISTRATION_ROLE = "Public"
+          AUTH_ROLE_PUBLIC = "Public"
           # Map kubauth groups → Superset FAB roles. role_keys come from the
           # OIDC `groups` claim via CustomSecurityManager.oauth_user_info.
           AUTH_ROLES_MAPPING = {
@@ -183,7 +220,9 @@ modules:
           CUSTOM_SECURITY_MANAGER = CustomSsoSecurityManager
 
       extraEnv:
-        SUPERSET_LOAD_EXAMPLES: "no"
+        # User-controlled toggle (UI parameter). Superset's init job runs
+        # `superset load_examples` only when this evaluates to "yes".
+        SUPERSET_LOAD_EXAMPLES: {{ if .Parameters.loadExamples }}"yes"{{ else }}"no" {{ end }}
         # Sandbox-only: a fixed SECRET_KEY avoids "Refusing to start due to
         # insecure SECRET_KEY". For prod, generate a unique 256-bit key.
         SUPERSET_SECRET_KEY: "okdp-sandbox-key-do-not-use-in-prod-please-32b"
