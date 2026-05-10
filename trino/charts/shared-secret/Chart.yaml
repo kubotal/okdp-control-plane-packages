@@ -1,0 +1,5 @@
+apiVersion: v2
+name: shared-secret
+description: Creates a random shared-secret Secret for Trino internal communication
+type: application
+version: 0.1.0

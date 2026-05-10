@@ -1,0 +1,5 @@
+apiVersion: v2
+name: seaweedfs-s3-creds
+description: Creates the S3 identities secret consumed by SeaweedFS s3 component
+type: application
+version: 0.1.0
