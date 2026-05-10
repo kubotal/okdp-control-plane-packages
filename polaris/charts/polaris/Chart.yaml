@@ -1,0 +1,4 @@
+apiVersion: v2
+name: polaris
+version: 0.1.5
+description: Apache Polaris (Iceberg REST catalog) minimal Helm chart for OKDP

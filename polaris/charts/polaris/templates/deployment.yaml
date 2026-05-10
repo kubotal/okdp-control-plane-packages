@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | trunc 63 }}
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: polaris
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.port }}
+              name: http
+          env:
+            # POLARIS_BOOTSTRAP_CREDENTIALS expects format "realm:client_id:client_secret"
+            # — we leave it unset so Polaris auto-bootstraps on first start.
+            - name: POLARIS_AUTHENTICATION_TYPE
+              value: "external"
+            - name: POLARIS_AUTHENTICATION_OIDC_ISSUER
+              value: {{ .Values.oidc.issuerUri | quote }}
+            {{- if .Values.s3.bucket }}
+            - name: POLARIS_DEFAULT_S3_BUCKET
+              value: {{ .Values.s3.bucket | quote }}
+            - name: AWS_REGION
+              value: {{ .Values.s3.region | quote }}
+            {{- end }}
+            {{- if .Values.s3.endpoint }}
+            - name: AWS_ENDPOINT_URL_S3
+              value: {{ .Values.s3.endpoint | quote }}
+            {{- end }}
+            - name: POLARIS_STS_ENABLED
+              value: {{ .Values.s3.stsEnabled | quote }}
+          volumeMounts:
+            - name: config
+              mountPath: /opt/polaris/config
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        # Tiny nginx sidecar that serves a static HTML info page at `/`.
+        # The Ingress routes `pathType: Exact /` here; all other paths go
+        # to the polaris container. nginx-unprivileged listens on 8080
+        # (no root needed) which works under our RuntimeDefault seccomp.
+        - name: info-page
+          image: nginxinc/nginx-unprivileged:alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: info
+          volumeMounts:
+            - name: info-html
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+          resources:
+            limits:
+              memory: "32Mi"
+              cpu: "50m"
+            requests:
+              memory: "16Mi"
+              cpu: "10m"
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-config
+        - name: info-html
+          configMap:
+            name: {{ .Release.Name }}-info-page

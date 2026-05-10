@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | quote }}
+spec:
+  # Polaris is an API-only service (Iceberg REST catalog) with no web UI,
+  # so hitting `/` would return a JSON 404 from Quarkus. We run a tiny
+  # nginx sidecar in the same pod that serves a static HTML info page,
+  # and route `pathType: Exact /` to it via this Ingress. Everything else
+  # (`pathType: Prefix /`) still goes to Polaris on the API port. Exact
+  # match wins over Prefix in nginx-ingress, so `/` lands on the sidecar
+  # and `/api/...`, `/q/health`, etc. land on Polaris untouched.
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port:
+                  name: info
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tlsSecretName | quote }}

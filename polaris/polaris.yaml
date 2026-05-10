@@ -1,0 +1,131 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# you may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+apiVersion: v1alpha1
+name: polaris
+tag: 0.1.0
+protected: false
+description: |
+  Apache Polaris Catalog — open-source Iceberg REST catalog with OIDC authentication.
+  Includes a Trino integration example and S3/STS connectivity example.
+usage:
+  text: |
+    Polaris Catalog REST API: https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
+schema:
+  parameters:
+    properties:
+      catalogName:
+        type: string
+        default: "okdp_catalog"
+        description: "Default Iceberg catalog name"
+        title: "Catalog | Name | | order:1"
+      s3Bucket:
+        type: string
+        default: ""
+        description: "S3 bucket for Iceberg warehouse"
+        title: "Storage | S3 Bucket | | order:1 placeholder:e.g. okdp-warehouse"
+      s3Endpoint:
+        type: string
+        default: ""
+        description: "S3-compatible endpoint (leave empty for AWS)"
+        title: "Storage | S3 Endpoint | | order:2 placeholder:e.g. http://minio.minio:9000"
+      s3Region:
+        type: string
+        default: "us-east-1"
+        description: "S3 region"
+        title: "Storage | S3 Region | | order:3"
+      stsEnabled:
+        type: boolean
+        default: false
+        description: "Enable AWS STS credential vending for clients"
+        title: "Storage | STS Enabled | | order:4 advanced:true"
+      memory:
+        type: string
+        default: "1Gi"
+        description: "Memory limit"
+        title: "Resources | Memory | | order:1 advanced:true"
+  context:
+    properties:
+      certificateIssuers:
+        required: true
+        properties:
+          selfSigned:
+            properties:
+              name: { type: string, required: true }
+      ingress:
+        required: true
+        properties:
+          suffix: { type: string, required: true }
+          className: { type: string, required: true }
+      kubauth:
+        required: true
+        properties:
+          namespace: { type: string, required: true }
+modules:
+  - name: oidc
+    source:
+      local:
+        path: charts/oidc
+    values: |
+      clientName: "{{ .Release.metadata.name }}"
+      oidcNamespace: "{{ .Context.kubauth.namespace }}"
+      credentialsSecretName: "{{ .Release.metadata.name }}-oidc-creds"
+      clientIdKey: "client_id"
+      clientSecretKey: "client_secret"
+      redirectURIs:
+        - "https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}/api/catalog/v1/oauth/tokens"
+      displayName: "Polaris ({{ .Release.metadata.name }})"
+      description: "OIDC client for Polaris Catalog {{ .Release.metadata.name }}"
+
+  - name: polaris
+    timeout: 10m
+    source:
+      local:
+        path: charts/polaris
+    values: |
+      {{- $host := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
+
+      image: "apache/polaris:1.0.1-incubating"
+      port: 8181
+
+      catalogName: "{{ .Parameters.catalogName }}"
+
+      s3:
+        bucket: "{{ .Parameters.s3Bucket }}"
+        endpoint: "{{ .Parameters.s3Endpoint }}"
+        region: "{{ .Parameters.s3Region }}"
+        stsEnabled: {{ .Parameters.stsEnabled }}
+
+      oidc:
+        issuerUri: "https://kubauth.{{ .Context.ingress.suffix }}"
+        credentialsSecretName: "{{ .Release.metadata.name }}-oidc-creds"
+
+      ingress:
+        host: "{{ $host }}"
+        className: "{{ .Context.ingress.className }}"
+        clusterIssuer: "{{ .Context.certificateIssuers.selfSigned.name }}"
+        tlsSecretName: "{{ .Release.metadata.name }}-tls"
+
+      resources:
+        limits:
+          memory: "{{ .Parameters.memory }}"
+        requests:
+          memory: "512Mi"
+
+roles:
+  - data-catalog
+dependencies:
+  - ingress
