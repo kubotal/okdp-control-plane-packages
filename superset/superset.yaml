@@ -1,0 +1,246 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# you may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+apiVersion: v1alpha1
+name: superset
+tag: 0.1.0
+protected: false
+description: |
+  Apache Superset BI platform with OIDC authentication via Kubauth (Flask-AppBuilder OAuth).
+  Wraps the upstream Superset Helm chart and pre-wires the OIDC client.
+usage:
+  text: |
+    Superset is available at https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
+schema:
+  parameters:
+    properties:
+      adminUser:
+        type: string
+        default: "admin"
+        description: "Initial admin username (created on bootstrap)"
+        title: "Admin | Username | | order:1"
+      memory:
+        type: string
+        default: "2Gi"
+        description: "Memory limit per Superset pod"
+        title: "Resources | Memory | | order:1 advanced:true"
+      cpu:
+        type: string
+        default: "500m"
+        description: "CPU limit per Superset pod"
+        title: "Resources | CPU | | order:2 advanced:true"
+      workers:
+        type: integer
+        default: 2
+        description: "Gunicorn workers"
+        title: "Resources | Workers | stepper | order:3 advanced:true"
+        minimum: 1
+        maximum: 10
+  context:
+    properties:
+      certificateIssuers:
+        required: true
+        properties:
+          selfSigned:
+            properties:
+              name: { type: string, required: true }
+      ingress:
+        required: true
+        properties:
+          suffix: { type: string, required: true }
+          className: { type: string, required: true }
+      kubauth:
+        required: true
+        properties:
+          namespace: { type: string, required: true }
+modules:
+  - name: oidc
+    source:
+      local:
+        path: charts/oidc
+    values: |
+      clientName: "{{ .Release.metadata.name }}"
+      oidcNamespace: "{{ .Context.kubauth.namespace }}"
+      credentialsSecretName: "{{ .Release.metadata.name }}-oidc-creds"
+      clientIdKey: "client_id"
+      clientSecretKey: "client_secret"
+      redirectURIs:
+        - "https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}/oauth-authorized/kubauth"
+      displayName: "Superset ({{ .Release.metadata.name }})"
+      description: "OIDC client for Superset {{ .Release.metadata.name }}"
+
+  - name: superset
+    timeout: 15m
+    source:
+      helmRepository:
+        url: https://apache.github.io/superset
+        chart: superset
+        version: 0.15.5
+    values: |
+      {{- $host := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
+
+      bootstrapScript: |
+        #!/bin/bash
+        # Superset 5.x ships a venv at /app/.venv but no `pip` module inside it
+        # — the image's package manager is `uv`. Plain `pip` resolves to the
+        # system pip and installs to a site-packages gunicorn never sees,
+        # which manifests as `ModuleNotFoundError: No module named 'psycopg2'`.
+        # Use `uv pip install --python /app/.venv/bin/python` to land the
+        # packages where the runtime actually looks.
+        export UV_CACHE_DIR=/tmp/uv-cache
+        uv pip install --python /app/.venv/bin/python \
+          psycopg2-binary==2.9.6 \
+          redis==4.5.5 \
+          Authlib
+        if [ ! -f ~/bootstrap ]; then echo "Running Superset with uid {{ "{{ .Values.runAsUser }}" }}" > ~/bootstrap; fi
+
+      init:
+        adminUser:
+          username: "{{ .Parameters.adminUser }}"
+
+      configOverrides:
+        oauth: |
+          from flask_appbuilder.security.manager import AUTH_OAUTH
+          from superset.security import SupersetSecurityManager
+          import os
+          # Superset runs behind nginx-ingress TLS-terminating proxy. Without
+          # ProxyFix, Flask sees the internal HTTP request and builds the OAuth
+          # redirect_uri as `http://...`, which doesn't match the OidcClient's
+          # pre-registered `https://...` URI → kubauth returns invalid_request.
+          # ProxyFix reads X-Forwarded-Proto from the ingress controller so
+          # url_for() emits `https://...`. PREFERRED_URL_SCHEME is the fallback
+          # for URLs generated outside a request context (cron, emails, etc).
+          ENABLE_PROXY_FIX = True
+          PREFERRED_URL_SCHEME = "https"
+          AUTH_TYPE = AUTH_OAUTH
+          AUTH_USER_REGISTRATION = True
+          # Default role for users whose kubauth groups don't match anything in
+          # AUTH_ROLES_MAPPING. Public has no perms by design.
+          AUTH_USER_REGISTRATION_ROLE = "Public"
+          # Map kubauth groups → Superset FAB roles. role_keys come from the
+          # OIDC `groups` claim via CustomSecurityManager.oauth_user_info.
+          AUTH_ROLES_MAPPING = {
+              "admins": ["Admin"],
+              "users": ["Alpha"],
+              "viewers": ["Gamma"],
+          }
+          AUTH_ROLES_SYNC_AT_LOGIN = True
+          OAUTH_PROVIDERS = [
+            {
+              'name':'kubauth',
+              'icon':'fa-key',
+              'token_key':'access_token',
+              'remote_app': {
+                'client_id': os.environ['KUBAUTH_CLIENT_ID'],
+                'client_secret': os.environ['KUBAUTH_CLIENT_SECRET'],
+                'api_base_url': 'https://kubauth.{{ .Context.ingress.suffix }}/',
+                'access_token_url': 'https://kubauth.{{ .Context.ingress.suffix }}/oauth2/token',
+                'authorize_url': 'https://kubauth.{{ .Context.ingress.suffix }}/oauth2/auth',
+                # Authlib needs the OIDC discovery doc to find jwks_uri (for
+                # ID-token signature verification). Without server_metadata_url,
+                # the callback fails with `Missing "jwks_uri" in metadata`.
+                'server_metadata_url': 'https://kubauth.{{ .Context.ingress.suffix }}/.well-known/openid-configuration',
+                'jwks_uri': 'https://kubauth.{{ .Context.ingress.suffix }}/.well-known/jwks.json',
+                'request_token_url': None,
+                'client_kwargs': {'scope': 'openid profile email groups'},
+              },
+            }
+          ]
+
+          # FAB has no built-in handler for our custom provider name 'kubauth',
+          # so the default oauth_user_info returns {} → user creation fails
+          # with the generic "The request to sign in was denied." Override the
+          # security manager to call kubauth's /userinfo and map the claims
+          # (sub, email, name, groups) into FAB's expected user dict.
+          class CustomSsoSecurityManager(SupersetSecurityManager):
+              def oauth_user_info(self, provider, response=None):
+                  if provider != 'kubauth':
+                      return {}
+                  me = self.appbuilder.sm.oauth_remotes[provider].get('userinfo').json()
+                  full_name = me.get('name', '') or ''
+                  first, _, last = full_name.partition(' ')
+                  return {
+                      'username': me.get('preferred_username') or me.get('sub'),
+                      'email': me.get('email'),
+                      'first_name': first,
+                      'last_name': last,
+                      'role_keys': me.get('groups', []),
+                  }
+
+          CUSTOM_SECURITY_MANAGER = CustomSsoSecurityManager
+
+      extraEnv:
+        SUPERSET_LOAD_EXAMPLES: "no"
+        # Sandbox-only: a fixed SECRET_KEY avoids "Refusing to start due to
+        # insecure SECRET_KEY". For prod, generate a unique 256-bit key.
+        SUPERSET_SECRET_KEY: "okdp-sandbox-key-do-not-use-in-prod-please-32b"
+        # Trust the sandbox self-signed CA so Python `requests` can verify
+        # kubauth's TLS cert during the OAuth token exchange. Without this,
+        # the OAuth callback fails with `CERTIFICATE_VERIFY_FAILED` and the
+        # UI shows "The request to sign in was denied." certs-bundle is a
+        # Secret propagated to every namespace by trust-manager.
+        REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-bundle/ca.crt
+        SSL_CERT_FILE: /etc/ssl/certs/ca-bundle/ca.crt
+
+      extraVolumes:
+        - name: ca-bundle
+          secret:
+            secretName: certs-bundle
+            items:
+              - key: ca.crt
+                path: ca.crt
+      extraVolumeMounts:
+        - name: ca-bundle
+          mountPath: /etc/ssl/certs/ca-bundle
+          readOnly: true
+
+      extraEnvRaw:
+        - name: KUBAUTH_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.metadata.name }}-oidc-creds
+              key: client_id
+        - name: KUBAUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.metadata.name }}-oidc-creds
+              key: client_secret
+
+      supersetNode:
+        replicaCount: 1
+        resources:
+          limits:
+            memory: "{{ .Parameters.memory }}"
+            cpu: "{{ .Parameters.cpu }}"
+        connections:
+          gunicornWorkers: {{ .Parameters.workers }}
+
+      ingress:
+        enabled: true
+        ingressClassName: "{{ .Context.ingress.className }}"
+        annotations:
+          cert-manager.io/cluster-issuer: "{{ .Context.certificateIssuers.selfSigned.name }}"
+        hosts:
+          - "{{ $host }}"
+        tls:
+          - secretName: "{{ .Release.metadata.name }}-tls"
+            hosts:
+              - "{{ $host }}"
+
+roles:
+  - data-visualization
+dependencies:
+  - ingress
