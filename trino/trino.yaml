@@ -1,0 +1,197 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# you may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+apiVersion: v1alpha1
+name: trino
+tag: 0.1.0
+protected: false
+description: |
+  Trino distributed SQL query engine with OIDC authentication via Kubauth.
+  Wraps the upstream Trino Helm chart and pre-wires the OIDC client.
+usage:
+  text: |
+    Trino UI is available at https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
+schema:
+  parameters:
+    properties:
+      workers:
+        type: integer
+        default: 2
+        description: "Number of Trino workers"
+        title: "Cluster | Workers | stepper | order:1"
+        minimum: 1
+        maximum: 20
+      coordinatorMemory:
+        type: string
+        default: "2Gi"
+        description: "Coordinator memory limit"
+        title: "Cluster | Coordinator Memory | | order:2 placeholder:e.g. 2Gi, 4Gi"
+      workerMemory:
+        type: string
+        default: "2Gi"
+        description: "Worker memory limit"
+        title: "Cluster | Worker Memory | | order:3 placeholder:e.g. 2Gi, 4Gi"
+      catalogs:
+        type: string
+        default: "tpch,memory"
+        description: "Built-in catalogs to enable (comma-separated)"
+        title: "Catalogs | Built-in | | order:1"
+  context:
+    properties:
+      certificateIssuers:
+        required: true
+        properties:
+          selfSigned:
+            properties:
+              name: { type: string, required: true }
+      ingress:
+        required: true
+        properties:
+          suffix: { type: string, required: true }
+          className: { type: string, required: true }
+      kubauth:
+        required: true
+        properties:
+          namespace: { type: string, required: true }
+modules:
+  - name: oidc
+    source:
+      local:
+        path: charts/oidc
+    values: |
+      clientName: "{{ .Release.metadata.name }}"
+      oidcNamespace: "{{ .Context.kubauth.namespace }}"
+      credentialsSecretName: "{{ .Release.metadata.name }}-oidc-creds"
+      clientIdKey: "client_id"
+      clientSecretKey: "client_secret"
+      redirectURIs:
+        - "https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}/oauth2/callback"
+      displayName: "Trino ({{ .Release.metadata.name }})"
+      description: "OIDC client for Trino {{ .Release.metadata.name }}"
+
+  - name: trino
+    timeout: 10m
+    source:
+      helmRepository:
+        url: https://trinodb.github.io/charts
+        chart: trino
+        version: 1.42.0
+    values: |
+      {{- $host := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
+
+      server:
+        workers: {{ .Parameters.workers }}
+        # Coordinator-only properties (web UI + OAuth2 endpoints — workers
+        # don't terminate logins, and `web-ui.authentication.type` is
+        # rejected by them). Chart key is server.coordinatorExtraConfig.
+        coordinatorExtraConfig: |
+          http-server.authentication.type=oauth2
+          http-server.authentication.allow-insecure-over-http=true
+          web-ui.authentication.type=oauth2
+          http-server.authentication.oauth2.issuer=https://kubauth.{{ .Context.ingress.suffix }}
+          http-server.authentication.oauth2.auth-url=https://kubauth.{{ .Context.ingress.suffix }}/oauth2/auth
+          http-server.authentication.oauth2.token-url=https://kubauth.{{ .Context.ingress.suffix }}/oauth2/token
+          http-server.authentication.oauth2.jwks-url=https://kubauth.{{ .Context.ingress.suffix }}/.well-known/jwks.json
+          http-server.authentication.oauth2.userinfo-url=https://kubauth.{{ .Context.ingress.suffix }}/userinfo
+          http-server.authentication.oauth2.scopes=openid,profile,email,groups
+          http-server.authentication.oauth2.client-id=${ENV:client_id}
+          http-server.authentication.oauth2.client-secret=${ENV:client_secret}
+
+      coordinator:
+        resources:
+          limits:
+            memory: "{{ .Parameters.coordinatorMemory }}"
+          requests:
+            memory: "1Gi"
+        # Mount the sandbox CA bundle (provided by trust-manager via the
+        # `certs-bundle` Secret synced into every namespace) so Trino's JVM
+        # trusts kubauth's self-signed cert when calling the OAuth2 endpoints.
+        additionalVolumes:
+          - name: truststore
+            secret:
+              secretName: certs-bundle
+              items:
+                - key: bundle.p12
+                  path: truststore.p12
+        additionalVolumeMounts:
+          - name: truststore
+            mountPath: /etc/ssl/certs/truststore.p12
+            subPath: truststore.p12
+            readOnly: true
+
+      worker:
+        resources:
+          limits:
+            memory: "{{ .Parameters.workerMemory }}"
+          requests:
+            memory: "1Gi"
+        # Workers also do internal HTTPS calls; same truststore.
+        additionalVolumes:
+          - name: truststore
+            secret:
+              secretName: certs-bundle
+              items:
+                - key: bundle.p12
+                  path: truststore.p12
+        additionalVolumeMounts:
+          - name: truststore
+            mountPath: /etc/ssl/certs/truststore.p12
+            subPath: truststore.p12
+            readOnly: true
+
+      env:
+        - name: JAVA_TOOL_OPTIONS
+          value: "-Djavax.net.ssl.trustStore=/etc/ssl/certs/truststore.p12 -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword="
+
+      auth:
+        passwordAuth: ""
+
+      # Common properties (coordinator + workers).
+      additionalConfigProperties:
+        # Trino terminates HTTP internally (TLS at the ingress); allow it.
+        - "http-server.process-forwarded=true"
+        # Required when authentication is enabled — sandbox-only fixed value.
+        - "internal-communication.shared-secret=okdp-sandbox-internal-shared-secret-do-not-use-in-prod"
+
+      envFrom:
+        - secretRef:
+            name: {{ .Release.metadata.name }}-oidc-creds
+
+      ingress:
+        enabled: true
+        className: "{{ .Context.ingress.className }}"
+        annotations:
+          cert-manager.io/cluster-issuer: "{{ .Context.certificateIssuers.selfSigned.name }}"
+        hosts:
+          - host: "{{ $host }}"
+            paths:
+              - path: /
+                pathType: Prefix
+        tls:
+          - secretName: "{{ .Release.metadata.name }}-tls"
+            hosts:
+              - "{{ $host }}"
+
+      catalogs:
+        {{- range $cat := splitList "," .Parameters.catalogs }}
+        {{ trim $cat }}: |
+          connector.name={{ trim $cat }}
+        {{- end }}
+
+roles:
+  - data-querying
+dependencies:
+  - ingress

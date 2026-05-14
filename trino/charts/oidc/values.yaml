@@ -1,0 +1,8 @@
+clientName: ""
+oidcNamespace: ""
+credentialsSecretName: ""
+clientIdKey: "client_id"
+clientSecretKey: "client_secret"
+redirectURIs: []
+displayName: ""
+description: ""
