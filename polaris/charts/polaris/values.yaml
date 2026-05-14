@@ -1,0 +1,17 @@
+image: ""
+port: 8181
+catalogName: ""
+s3:
+  bucket: ""
+  endpoint: ""
+  region: "us-east-1"
+  stsEnabled: false
+oidc:
+  issuerUri: ""
+  credentialsSecretName: ""
+ingress:
+  host: ""
+  className: "nginx"
+  clusterIssuer: ""
+  tlsSecretName: ""
+resources: {}

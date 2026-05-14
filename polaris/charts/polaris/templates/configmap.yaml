@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  catalog.yaml: |
+    catalog:
+      name: {{ .Values.catalogName | quote }}
+      type: iceberg
+      properties:
+        warehouse: "s3://{{ .Values.s3.bucket }}/{{ .Values.catalogName }}"
+        s3.region: {{ .Values.s3.region | quote }}
+        {{- if .Values.s3.endpoint }}
+        s3.endpoint: {{ .Values.s3.endpoint | quote }}
+        s3.path-style-access: "true"
+        {{- end }}
+  trino-integration.example: |
+    # Example Trino catalog config to consume Polaris
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://{{ .Release.Name }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.port }}/api/catalog
+    iceberg.rest-catalog.oauth2.token=<obtain via OIDC>

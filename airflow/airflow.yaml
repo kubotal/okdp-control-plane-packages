@@ -1,0 +1,276 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# you may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+apiVersion: v1alpha1
+name: airflow
+tag: 0.1.0
+protected: false
+description: |
+  Apache Airflow workflow orchestrator with KubernetesExecutor and OIDC
+  authentication via Kubauth (Flask-AppBuilder OAuth).
+  Wraps the upstream Airflow Helm chart with optional git-sync sidecar
+  for DAGs.
+usage:
+  text: |
+    Airflow UI is available at https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
+schema:
+  parameters:
+    properties:
+      executor:
+        type: string
+        default: "KubernetesExecutor"
+        description: "Airflow executor type"
+        title: "Cluster | Executor | | order:1"
+        enum: ["KubernetesExecutor", "CeleryExecutor", "LocalExecutor"]
+      dagsGitRepo:
+        type: string
+        default: ""
+        description: "Git repository for DAGs (leave empty to use bundled examples)"
+        title: "DAGs | Git Repo URL | | order:1 placeholder:e.g. https://github.com/org/dags.git"
+      dagsGitBranch:
+        type: string
+        default: "main"
+        description: "Git branch to sync"
+        title: "DAGs | Git Branch | | order:2"
+      schedulerMemory:
+        type: string
+        default: "1Gi"
+        description: "Scheduler memory limit"
+        title: "Resources | Scheduler Memory | | order:1 advanced:true"
+      webserverMemory:
+        type: string
+        default: "2Gi"
+        description: "API server memory limit (Airflow 3.x api-server with FAB OAuth needs ~1.5GB minimum, 1Gi causes OOMKilled)"
+        title: "Resources | Webserver Memory | | order:2 advanced:true"
+  context:
+    properties:
+      certificateIssuers:
+        required: true
+        properties:
+          selfSigned:
+            properties:
+              name: { type: string, required: true }
+      ingress:
+        required: true
+        properties:
+          suffix: { type: string, required: true }
+          className: { type: string, required: true }
+      kubauth:
+        required: true
+        properties:
+          namespace: { type: string, required: true }
+modules:
+  - name: oidc
+    source:
+      local:
+        path: charts/oidc
+    values: |
+      clientName: "{{ .Release.metadata.name }}"
+      oidcNamespace: "{{ .Context.kubauth.namespace }}"
+      credentialsSecretName: "{{ .Release.metadata.name }}-oidc-creds"
+      clientIdKey: "client_id"
+      clientSecretKey: "client_secret"
+      # Airflow 3.x mounts FAB under /auth/ (changed from / in 2.x). The OAuth
+      # callback path is therefore /auth/oauth-authorized/<provider>, not
+      # /oauth-authorized/<provider>. Both are listed for compatibility.
+      redirectURIs:
+        - "https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}/auth/oauth-authorized/kubauth"
+        - "https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}/oauth-authorized/kubauth"
+      displayName: "Airflow ({{ .Release.metadata.name }})"
+      description: "OIDC client for Airflow {{ .Release.metadata.name }}"
+
+  - name: airflow
+    timeout: 15m
+    source:
+      helmRepository:
+        url: https://airflow.apache.org
+        chart: airflow
+        version: 1.18.0
+    values: |
+      {{- $host := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
+
+      executor: "{{ .Parameters.executor }}"
+
+      # The chart's default migration & user-create jobs are Helm post-install
+      # hooks. With Flux HelmRelease (and ArgoCD), Helm waits for all resources
+      # to be Ready BEFORE firing post-install hooks — but the Deployments
+      # have a wait-for-airflow-migrations init container that blocks until
+      # the migration job has run. That's a deadlock. Setting useHelmHooks
+      # to false renders the jobs as regular K8s resources, which run
+      # alongside the Deployments and let the init containers progress.
+      migrateDatabaseJob:
+        useHelmHooks: false
+      createUserJob:
+        useHelmHooks: false
+
+      webserverSecretKeySecretName: {{ .Release.metadata.name }}-webserver-key
+
+      # Airflow 3.x renamed `webserver` to `apiServer`. The chart 1.18.0 has
+      # both sections: `apiServer.*` controls the running API server (the new
+      # FastAPI-based UI), and `webserver.*` is kept for legacy 2.x and for
+      # one-off jobs (defaultUser via createUserJob). The OAuth config MUST
+      # go in `apiServer.apiServerConfig` for it to be picked up by the
+      # running pod — `webserver.webserverConfig` is silently ignored in 3.x.
+      apiServer:
+        resources:
+          limits:
+            memory: "{{ .Parameters.webserverMemory }}"
+          requests:
+            memory: "512Mi"
+        apiServerConfig: |
+          from flask_appbuilder.security.manager import AUTH_OAUTH
+          from airflow.providers.fab.auth_manager.security_manager.override import FabAirflowSecurityManagerOverride
+          import os
+          AUTH_TYPE = AUTH_OAUTH
+          AUTH_USER_REGISTRATION = True
+          # Default role for users whose kubauth groups don't match anything in
+          # AUTH_ROLES_MAPPING. Public has no perms by design.
+          AUTH_USER_REGISTRATION_ROLE = "Public"
+          # Map kubauth groups → Airflow FAB roles. role_keys returned by
+          # CustomSecurityManager.oauth_user_info come from the OIDC `groups`
+          # claim. AUTH_ROLES_SYNC_AT_LOGIN re-evaluates roles on every login
+          # (so removing a user from the admins group revokes Admin access
+          # next time they log in).
+          AUTH_ROLES_MAPPING = {
+              "admins": ["Admin"],
+              "users": ["User"],
+              "viewers": ["Viewer"],
+          }
+          AUTH_ROLES_SYNC_AT_LOGIN = True
+          OAUTH_PROVIDERS = [
+            {
+              'name': 'kubauth',
+              'icon': 'fa-key',
+              'token_key': 'access_token',
+              'remote_app': {
+                'client_id': os.environ['client_id'],
+                'client_secret': os.environ['client_secret'],
+                'api_base_url': 'https://kubauth.{{ .Context.ingress.suffix }}/',
+                'access_token_url': 'https://kubauth.{{ .Context.ingress.suffix }}/oauth2/token',
+                'authorize_url': 'https://kubauth.{{ .Context.ingress.suffix }}/oauth2/auth',
+                # Authlib needs the OIDC discovery doc to find jwks_uri (for
+                # ID-token signature verification). Without server_metadata_url,
+                # the callback fails with `Missing "jwks_uri" in metadata`.
+                'server_metadata_url': 'https://kubauth.{{ .Context.ingress.suffix }}/.well-known/openid-configuration',
+                'jwks_uri': 'https://kubauth.{{ .Context.ingress.suffix }}/.well-known/jwks.json',
+                'request_token_url': None,
+                'client_kwargs': {'scope': 'openid profile email groups'},
+              },
+            }
+          ]
+
+          # FAB has no built-in handler for our custom provider name 'kubauth',
+          # so the default oauth_user_info returns nothing → user creation fails
+          # with the generic "Invalid login. Please try again." Override the
+          # security manager to call kubauth's /userinfo and map the claims
+          # (sub, email, name, groups) into FAB's expected user dict.
+          class CustomSecurityManager(FabAirflowSecurityManagerOverride):
+              def oauth_user_info(self, provider, response=None):
+                  if provider != 'kubauth':
+                      return {}
+                  me = self.oauth_remotes[provider].get('userinfo').json()
+                  full_name = me.get('name', '') or ''
+                  first, _, last = full_name.partition(' ')
+                  return {
+                      'username': me.get('preferred_username') or me.get('sub'),
+                      'email': me.get('email'),
+                      'first_name': first,
+                      'last_name': last,
+                      'role_keys': me.get('groups', []),
+                  }
+
+          SECURITY_MANAGER_CLASS = CustomSecurityManager
+
+      # `defaultUser` stays under `webserver` because the chart only consumes
+      # it from there (for the createUserJob). Disable: with OAuth, users
+      # auto-register on first login via kubauth.
+      webserver:
+        defaultUser:
+          enabled: false
+
+      scheduler:
+        resources:
+          limits:
+            memory: "{{ .Parameters.schedulerMemory }}"
+          requests:
+            memory: "512Mi"
+
+      # Airflow chart schema rejects `env: [{valueFrom}]`. Use extraEnvFrom
+      # to inject all keys of the oidc-creds Secret (client_id, client_secret)
+      # as env vars in every Airflow component pod.
+      extraEnvFrom: |
+        - secretRef:
+            name: {{ .Release.metadata.name }}-oidc-creds
+
+      # Trust the sandbox self-signed CA so Python `requests` can verify
+      # kubauth's TLS cert during the OAuth token exchange. Without this,
+      # the api-server fails the callback with `CERTIFICATE_VERIFY_FAILED`
+      # and the user sees "The request to sign in was denied." in the UI.
+      # certs-bundle is a Secret propagated to every namespace by trust-manager.
+      env:
+        - name: REQUESTS_CA_BUNDLE
+          value: /etc/ssl/certs/ca-bundle/ca.crt
+        - name: SSL_CERT_FILE
+          value: /etc/ssl/certs/ca-bundle/ca.crt
+      volumes:
+        - name: ca-bundle
+          secret:
+            secretName: certs-bundle
+            items:
+              - key: ca.crt
+                path: ca.crt
+      volumeMounts:
+        - name: ca-bundle
+          mountPath: /etc/ssl/certs/ca-bundle
+          readOnly: true
+
+      # Bitnami stopped publishing tagged postgres images on Docker Hub
+      # (16.1.0-debian-11-r15 is gone). Pin to `latest` for sandbox; for
+      # production, point to your own registry mirror.
+      postgresql:
+        image:
+          tag: "latest"
+
+      {{- if .Parameters.dagsGitRepo }}
+      dags:
+        gitSync:
+          enabled: true
+          repo: "{{ .Parameters.dagsGitRepo }}"
+          branch: "{{ .Parameters.dagsGitBranch }}"
+          subPath: "dags"
+          period: 60s
+      {{- end }}
+
+      # Airflow 3.x renamed `webserver` to `apiServer` and the chart 1.18.0
+      # exposes ingress under `ingress.apiServer` (not `ingress.web` which is
+      # the legacy 2.x path). The actual K8s Service created is
+      # `<release>-airflow-api-server` on port 8080.
+      ingress:
+        apiServer:
+          enabled: true
+          ingressClassName: "{{ .Context.ingress.className }}"
+          annotations:
+            cert-manager.io/cluster-issuer: "{{ .Context.certificateIssuers.selfSigned.name }}"
+          hosts:
+            - name: "{{ $host }}"
+              tls:
+                enabled: true
+                secretName: "{{ .Release.metadata.name }}-tls"
+
+roles:
+  - data-orchestration
+dependencies:
+  - ingress
