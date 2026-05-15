@@ -145,11 +145,13 @@ modules:
           http-server.authentication.oauth2.scopes=openid,profile,email,groups
           http-server.authentication.oauth2.client-id=${ENV:client_id}
           http-server.authentication.oauth2.client-secret=${ENV:client_secret}
-          http-server.authentication.oauth2.principal-field=preferred_username
+          # principal-field omitted: Trino defaults to `sub`, which kubauth
+          # always emits. Setting `preferred_username` (sandbox/Keycloak
+          # default) breaks login because kubauth ID tokens don't carry it.
           # JWT — bearer tokens for service accounts (e.g. Superset, scripts)
           http-server.authentication.jwt.key-file=https://kubauth.{{ .Context.ingress.suffix }}/.well-known/jwks.json
           http-server.authentication.jwt.required-issuer=https://kubauth.{{ .Context.ingress.suffix }}
-          http-server.authentication.jwt.principal-field=client_id
+          http-server.authentication.jwt.principal-field=sub
 
       coordinator:
         resources:
