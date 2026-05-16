@@ -16,7 +16,7 @@
 
 apiVersion: v1alpha1
 name: jupyterhub
-tag: 0.7.0
+tag: 0.8.0
 protected: false
 description: |
   JupyterHub - Multi-user interactive development environment for data science and machine learning.

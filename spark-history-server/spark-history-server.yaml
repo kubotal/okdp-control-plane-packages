@@ -16,7 +16,7 @@
 
 apiVersion: v1alpha1
 name: spark-history-server
-tag: 0.18.0
+tag: 0.19.0
 protected: false
 description: |
   Spark History Server with OIDC authentication and Web Proxy for live job monitoring.

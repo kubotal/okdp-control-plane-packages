@@ -16,12 +16,11 @@
 
 apiVersion: v1alpha1
 name: trino
-tag: 0.2.0
+tag: 0.3.0
 protected: false
 description: |
-  Trino 480 distributed SQL query engine with OIDC (OAuth2 + JWT) auth via kubauth.
-  Mirrors the configurable resource quotas and JWT bearer-token flow from
-  okdp-sandbox/foundation while keeping the simpler kubauth provider model.
+  Trino distributed SQL query engine with OIDC authentication via Kubauth.
+  Wraps the upstream Trino Helm chart and pre-wires the OIDC client.
 usage:
   text: |
     Trino UI is available at https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
@@ -35,22 +34,16 @@ schema:
         title: "Cluster | Workers | stepper | order:1"
         minimum: 1
         maximum: 20
-      workerCpu:
-        type: number
-        default: 0.5
-        description: "Worker CPU request (vCPU). Limit is 2x. Recommended request=limit for predictable scheduling."
-        title: "Cluster | Worker CPU | | order:2 placeholder:e.g. 0.5, 1, 2"
-        multipleOf: 0.25
       coordinatorMemory:
         type: string
         default: "2Gi"
         description: "Coordinator memory limit"
-        title: "Cluster | Coordinator Memory | | order:3 placeholder:e.g. 2Gi, 4Gi"
+        title: "Cluster | Coordinator Memory | | order:2 placeholder:e.g. 2Gi, 4Gi"
       workerMemory:
         type: string
         default: "2Gi"
         description: "Worker memory limit"
-        title: "Cluster | Worker Memory | | order:4 placeholder:e.g. 2Gi, 4Gi"
+        title: "Cluster | Worker Memory | | order:3 placeholder:e.g. 2Gi, 4Gi"
       catalogs:
         type: string
         default: "tpch,memory"
@@ -89,54 +82,25 @@ modules:
       displayName: "Trino ({{ .Release.metadata.name }})"
       description: "OIDC client for Trino {{ .Release.metadata.name }}"
 
-  - name: shared-secret
-    source:
-      local:
-        path: charts/shared-secret
-    values: |
-      secretName: "{{ .Release.metadata.name }}-shared-secret"
-      key: "shared-secret"
-
   - name: trino
-    dependsOn:
-      - oidc
-      - shared-secret
     timeout: 10m
     source:
       helmRepository:
         url: https://trinodb.github.io/charts
         chart: trino
-        version: 1.42.1
+        version: 1.42.0
     values: |
       {{- $host := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
 
-      image:
-        repository: trinodb/trino
-        tag: "480"
-
       server:
         workers: {{ .Parameters.workers }}
-        node:
-          environment: sandbox
-        config:
-          authenticationType: "oauth2"
-          coordinator: "true"
-          node-scheduler.include-coordinator: "true"
-          discovery-server.enabled: "true"
-          path: /etc/trino
-          https:
-            enabled: false
         # Coordinator-only properties (web UI + OAuth2 endpoints — workers
         # don't terminate logins, and `web-ui.authentication.type` is
         # rejected by them). Chart key is server.coordinatorExtraConfig.
-        # JWT bearer-token auth is added alongside OAuth2 for non-interactive
-        # service-account access (CLI with --access-token, automation jobs).
         coordinatorExtraConfig: |
-          http-server.process-forwarded=true
-          web-ui.authentication.type=oauth2
-          http-server.authentication.type=jwt,oauth2
+          http-server.authentication.type=oauth2
           http-server.authentication.allow-insecure-over-http=true
-          # OAuth2 — interactive browser login for humans
+          web-ui.authentication.type=oauth2
           http-server.authentication.oauth2.issuer=https://kubauth.{{ .Context.ingress.suffix }}
           http-server.authentication.oauth2.auth-url=https://kubauth.{{ .Context.ingress.suffix }}/oauth2/auth
           http-server.authentication.oauth2.token-url=https://kubauth.{{ .Context.ingress.suffix }}/oauth2/token
@@ -145,22 +109,13 @@ modules:
           http-server.authentication.oauth2.scopes=openid,profile,email,groups
           http-server.authentication.oauth2.client-id=${ENV:client_id}
           http-server.authentication.oauth2.client-secret=${ENV:client_secret}
-          # principal-field omitted: Trino defaults to `sub`, which kubauth
-          # always emits. Setting `preferred_username` (sandbox/Keycloak
-          # default) breaks login because kubauth ID tokens don't carry it.
-          # JWT — bearer tokens for service accounts (e.g. Superset, scripts)
-          http-server.authentication.jwt.key-file=https://kubauth.{{ .Context.ingress.suffix }}/.well-known/jwks.json
-          http-server.authentication.jwt.required-issuer=https://kubauth.{{ .Context.ingress.suffix }}
-          http-server.authentication.jwt.principal-field=sub
 
       coordinator:
         resources:
-          requests:
-            cpu: "500m"
-            memory: "1Gi"
           limits:
-            cpu: "2"
             memory: "{{ .Parameters.coordinatorMemory }}"
+          requests:
+            memory: "1Gi"
         # Mount the sandbox CA bundle (provided by trust-manager via the
         # `certs-bundle` Secret synced into every namespace) so Trino's JVM
         # trusts kubauth's self-signed cert when calling the OAuth2 endpoints.
@@ -178,15 +133,11 @@ modules:
             readOnly: true
 
       worker:
-        # Resource quotas pattern from okdp-sandbox: request from the UI
-        # param, limit = 2x request (predictable burst headroom).
         resources:
-          requests:
-            cpu: "{{ .Parameters.workerCpu }}"
-            memory: "1Gi"
           limits:
-            cpu: "{{ mulf (float64 .Parameters.workerCpu) 2 }}"
             memory: "{{ .Parameters.workerMemory }}"
+          requests:
+            memory: "1Gi"
         # Workers also do internal HTTPS calls; same truststore.
         additionalVolumes:
           - name: truststore
@@ -204,14 +155,6 @@ modules:
       env:
         - name: JAVA_TOOL_OPTIONS
           value: "-Djavax.net.ssl.trustStore=/etc/ssl/certs/truststore.p12 -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword="
-        # Read the internal-communication shared secret from a K8s Secret
-        # (generated by the `shared-secret` module on first deploy and
-        # preserved across reconciles) instead of hardcoding the value.
-        - name: TRINO_SHARED_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: {{ .Release.metadata.name }}-shared-secret
-              key: shared-secret
 
       auth:
         passwordAuth: ""
@@ -220,9 +163,8 @@ modules:
       additionalConfigProperties:
         # Trino terminates HTTP internally (TLS at the ingress); allow it.
         - "http-server.process-forwarded=true"
-        # Pattern from okdp-sandbox: shared-secret read from env var, never
-        # baked into config files. Source: the `shared-secret` local chart.
-        - "internal-communication.shared-secret=${ENV:TRINO_SHARED_SECRET}"
+        # Required when authentication is enabled — sandbox-only fixed value.
+        - "internal-communication.shared-secret=okdp-sandbox-internal-shared-secret-do-not-use-in-prod"
 
       envFrom:
         - secretRef:
@@ -233,8 +175,6 @@ modules:
         className: "{{ .Context.ingress.className }}"
         annotations:
           cert-manager.io/cluster-issuer: "{{ .Context.certificateIssuers.selfSigned.name }}"
-          nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-          nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
         hosts:
           - host: "{{ $host }}"
             paths:
