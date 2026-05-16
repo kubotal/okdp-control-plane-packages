@@ -16,13 +16,13 @@
 
 apiVersion: v1alpha1
 name: airflow
-tag: 0.2.0
+tag: 0.3.0
 protected: false
 description: |
-  Apache Airflow 3.2.1 workflow orchestrator with KubernetesExecutor and OIDC
-  authentication via Kubauth (Flask-AppBuilder OAuth). Aligned with
-  okdp-sandbox/foundation: triggerer resources, JWT/fernet secrets,
-  insecureSkipVerify toggle, optional git-sync sidecar for DAGs.
+  Apache Airflow workflow orchestrator with KubernetesExecutor and OIDC
+  authentication via Kubauth (Flask-AppBuilder OAuth).
+  Wraps the upstream Airflow Helm chart with optional git-sync sidecar
+  for DAGs.
 usage:
   text: |
     Airflow UI is available at https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
@@ -55,16 +55,6 @@ schema:
         default: "2Gi"
         description: "API server memory limit (Airflow 3.x api-server with FAB OAuth needs ~1.5GB minimum, 1Gi causes OOMKilled)"
         title: "Resources | Webserver Memory | | order:2 advanced:true"
-      triggererMemory:
-        type: string
-        default: "512Mi"
-        description: "Triggerer memory limit (handles async deferred tasks)"
-        title: "Resources | Triggerer Memory | | order:3 advanced:true"
-      insecureSkipVerify:
-        type: boolean
-        default: false
-        description: "Skip TLS verification on OIDC calls (DEV ONLY). Default false: use CA bundle from certs-bundle."
-        title: "Security | Insecure Skip Verify | | order:1 advanced:true"
   context:
     properties:
       certificateIssuers:
@@ -108,13 +98,11 @@ modules:
       helmRepository:
         url: https://airflow.apache.org
         chart: airflow
-        version: 1.21.0
+        version: 1.18.0
     values: |
       {{- $host := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
 
       executor: "{{ .Parameters.executor }}"
-      defaultAirflowTag: "3.2.1"
-      airflowVersion: "3.2.1"
 
       # The chart's default migration & user-create jobs are Helm post-install
       # hooks. With Flux HelmRelease (and ArgoCD), Helm waits for all resources
@@ -219,25 +207,6 @@ modules:
             memory: "{{ .Parameters.schedulerMemory }}"
           requests:
             memory: "512Mi"
-        # Sandbox parity: scheduler init can be slow on first run while it
-        # imports providers and bootstraps the metadata db. Default of 6 was
-        # tripping startup probe before the scheduler became serving.
-        startupProbe:
-          failureThreshold: 12
-          timeoutSeconds: 60
-
-      # Sandbox parity: triggerer for async/deferred tasks. Disabled in older
-      # PoC values default; explicit enable + sized resources keeps it from
-      # CrashLooping on small clusters.
-      triggerer:
-        enabled: true
-        resources:
-          requests:
-            memory: "128Mi"
-            cpu: "50m"
-          limits:
-            memory: "{{ .Parameters.triggererMemory }}"
-            cpu: "300m"
 
       # Airflow chart schema rejects `env: [{valueFrom}]`. Use extraEnvFrom
       # to inject all keys of the oidc-creds Secret (client_id, client_secret)
@@ -256,13 +225,6 @@ modules:
           value: /etc/ssl/certs/ca-bundle/ca.crt
         - name: SSL_CERT_FILE
           value: /etc/ssl/certs/ca-bundle/ca.crt
-        - name: CURL_CA_BUNDLE
-          value: /etc/ssl/certs/ca-bundle/ca.crt
-        # Toggle TLS verification on OIDC calls (sandbox parity). Default false:
-        # the api-server config uses REQUESTS_CA_BUNDLE. Set to true ONLY for
-        # debugging cert chain issues in dev — never in production.
-        - name: INSECURE_VERIFY_TLS
-          value: {{ if .Parameters.insecureSkipVerify }}"true"{{ else }}"false"{{ end }}
       volumes:
         - name: ca-bundle
           secret:
