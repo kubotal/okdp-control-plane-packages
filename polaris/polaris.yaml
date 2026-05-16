@@ -16,11 +16,13 @@
 
 apiVersion: v1alpha1
 name: polaris
-tag: 0.1.0
+tag: 0.2.0
 protected: false
 description: |
-  Apache Polaris Catalog — open-source Iceberg REST catalog with OIDC authentication.
-  Includes a Trino integration example and S3/STS connectivity example.
+  Apache Polaris 1.3.0-incubating — Iceberg REST catalog with OIDC authentication.
+  Aligned with okdp-sandbox/foundation (image bump + CA trust for OIDC TLS),
+  while keeping kubauth as OIDC provider and the lightweight in-memory persistence
+  (no Postgres dependency for the sandbox).
 usage:
   text: |
     Polaris Catalog REST API: https://{{ .Release.metadata.name }}.{{ .Context.ingress.suffix }}
@@ -32,6 +34,11 @@ schema:
         default: "okdp_catalog"
         description: "Default Iceberg catalog name"
         title: "Catalog | Name | | order:1"
+      realm:
+        type: string
+        default: "POLARIS"
+        description: "Polaris realm (multi-tenancy boundary). Use the same value across services that share catalogs."
+        title: "Catalog | Realm | | order:2"
       s3Bucket:
         type: string
         default: ""
@@ -98,10 +105,11 @@ modules:
     values: |
       {{- $host := printf "%s.%s" .Release.metadata.name .Context.ingress.suffix -}}
 
-      image: "apache/polaris:1.0.1-incubating"
+      image: "apache/polaris:1.3.0-incubating"
       port: 8181
 
       catalogName: "{{ .Parameters.catalogName }}"
+      realm: "{{ .Parameters.realm }}"
 
       s3:
         bucket: "{{ .Parameters.s3Bucket }}"

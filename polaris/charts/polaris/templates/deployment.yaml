@@ -31,6 +31,13 @@ spec:
               value: "external"
             - name: POLARIS_AUTHENTICATION_OIDC_ISSUER
               value: {{ .Values.oidc.issuerUri | quote }}
+            # Multi-tenancy realm boundary (sandbox parity). Default "POLARIS"
+            # matches the upstream chart's default and keeps the catalog
+            # accessible without explicit Polaris-Realm header.
+            - name: POLARIS_REALM_CONTEXT_REALMS
+              value: {{ .Values.realm | quote }}
+            - name: POLARIS_REALM_CONTEXT_DEFAULT_REALM
+              value: {{ .Values.realm | quote }}
             {{- if .Values.s3.bucket }}
             - name: POLARIS_DEFAULT_S3_BUCKET
               value: {{ .Values.s3.bucket | quote }}
@@ -43,9 +50,21 @@ spec:
             {{- end }}
             - name: POLARIS_STS_ENABLED
               value: {{ .Values.s3.stsEnabled | quote }}
+            # Trust the sandbox self-signed CA so Polaris (Quarkus) trusts
+            # kubauth's TLS when fetching the OIDC discovery / JWKS.
+            # certs-bundle Secret is propagated to every namespace by trust-manager.
+            - name: QUARKUS_OIDC_TLS_CONFIGURATION_NAME
+              value: "oidc"
+            - name: QUARKUS_TLS__OIDC__TRUST_STORE_PEM_CERTS
+              value: "/cacerts/ca.crt"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Djavax.net.ssl.trustStore=/cacerts/bundle.p12 -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword="
           volumeMounts:
             - name: config
               mountPath: /opt/polaris/config
+            - name: cacerts
+              mountPath: /cacerts
+              readOnly: true
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -78,3 +97,6 @@ spec:
         - name: info-html
           configMap:
             name: {{ .Release.Name }}-info-page
+        - name: cacerts
+          secret:
+            secretName: certs-bundle
