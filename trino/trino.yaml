@@ -16,7 +16,7 @@
 
 apiVersion: v1alpha1
 name: trino
-tag: 0.3.0
+tag: 0.4.0
 protected: false
 description: |
   Trino distributed SQL query engine with OIDC authentication via Kubauth.
