@@ -49,6 +49,11 @@ schema:
         default: "tpch,memory"
         description: "Built-in catalogs to enable (comma-separated)"
         title: "Catalogs | Built-in | | order:1"
+      extraCatalogs:
+        type: string
+        default: ""
+        description: "Alias for catalogs (name used by the end-to-end integration line); merged with catalogs."
+        title: "Catalogs | Extra Built-in | | order:2 advanced:true"
   context:
     properties:
       certificateIssuers:
@@ -186,9 +191,13 @@ modules:
               - "{{ $host }}"
 
       catalogs:
-        {{- range $cat := splitList "," .Parameters.catalogs }}
-        {{ trim $cat }}: |
-          connector.name={{ trim $cat }}
+        {{- $names := concat (splitList "," .Parameters.catalogs) (splitList "," .Parameters.extraCatalogs) | uniq }}
+        {{- range $cat := $names }}
+        {{- $cat = trim $cat }}
+        {{- if $cat }}
+        {{ $cat }}: |
+          connector.name={{ $cat }}
+        {{- end }}
         {{- end }}
 
 roles:
