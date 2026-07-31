@@ -46,6 +46,14 @@ concurrency:
 
 jobs:
   kubocd-packages-ci:
+    # This job publishes to the public registry, which needs REGISTRY_USERNAME
+    # and REGISTRY_ROBOT_TOKEN. GitHub withholds secrets from workflows
+    # triggered by a pull request from a fork, so the registry login fails with
+    # "Username and password required" before anything is validated. Skip it in
+    # that case; it still runs on every push and on same-repository PRs.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/kubocd-package-template.yml
     with:
       ci_registry: "ghcr.io"
