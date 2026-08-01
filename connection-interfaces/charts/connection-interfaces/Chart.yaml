@@ -1,0 +1,5 @@
+apiVersion: v2
+name: connection-interfaces
+description: KuboCD connection contracts for the external resources a project can declare
+type: application
+version: 0.1.0

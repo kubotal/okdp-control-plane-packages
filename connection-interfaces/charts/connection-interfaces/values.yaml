@@ -1,0 +1,8 @@
+# Kind of the contract objects to create.
+#
+# The KuboCD version currently deployed exposes a single, cluster-scoped
+# `Interface`. The connection2 work makes `Interface` namespaced and introduces
+# a cluster-scoped `ClusterInterface`; these contracts describe resources that
+# are not tied to any namespace, so they belong on the cluster-scoped kind —
+# which is `Interface` today and `ClusterInterface` afterwards.
+interfaceKind: Interface

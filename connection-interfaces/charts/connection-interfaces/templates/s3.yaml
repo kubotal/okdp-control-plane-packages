@@ -1,0 +1,30 @@
+{{- /*
+  Contract for S3-compatible object storage (AWS S3, MinIO, SeaweedFS, ...).
+
+  accessKey is part of the contract because a key ID is not a credential on its
+  own; the secret access key is not, and lives in the referenced Secret.
+*/}}
+apiVersion: kubocd.kubotal.io/v1alpha1
+kind: {{ .Values.interfaceKind }}
+metadata:
+  name: s3
+spec:
+  description: S3-compatible object storage
+  schema:
+    type: object
+    properties:
+      endpoint:
+        type: string
+        required: true
+      bucket:
+        type: string
+        required: true
+      region:
+        type: string
+        default: us-east-1
+      accessKey:
+        type: string
+        required: true
+      pathStyle:
+        type: boolean
+        default: true

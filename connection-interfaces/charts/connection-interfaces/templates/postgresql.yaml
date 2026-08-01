@@ -1,0 +1,34 @@
+{{- /*
+  Contract for a PostgreSQL server a project connects to.
+
+  The properties are exactly what the Control Plane writes to a Connection's
+  spec.values — the password is deliberately absent: credentials are stored in
+  a Kubernetes Secret the Connection references through the
+  okdp.io/credentials-secret annotation, never in the resource itself.
+*/}}
+apiVersion: kubocd.kubotal.io/v1alpha1
+kind: {{ .Values.interfaceKind }}
+metadata:
+  name: postgresql
+spec:
+  description: PostgreSQL database server
+  schema:
+    type: object
+    properties:
+      host:
+        type: string
+        required: true
+      port:
+        type: integer
+        required: true
+        default: 5432
+      database:
+        type: string
+        required: true
+      user:
+        type: string
+        required: true
+      sslMode:
+        type: string
+        required: true
+        default: require

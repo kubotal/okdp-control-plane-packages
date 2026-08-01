@@ -1,0 +1,30 @@
+{{- /*
+  Contract for a MySQL or MariaDB server a project connects to.
+  As for PostgreSQL, the password lives in a Secret and not in spec.values.
+*/}}
+apiVersion: kubocd.kubotal.io/v1alpha1
+kind: {{ .Values.interfaceKind }}
+metadata:
+  name: mysql
+spec:
+  description: MySQL or MariaDB database server
+  schema:
+    type: object
+    properties:
+      host:
+        type: string
+        required: true
+      port:
+        type: integer
+        required: true
+        default: 3306
+      database:
+        type: string
+        required: true
+      user:
+        type: string
+        required: true
+      tls:
+        type: string
+        required: true
+        default: preferred
