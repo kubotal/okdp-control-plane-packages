@@ -28,3 +28,13 @@ spec:
       pathStyle:
         type: boolean
         default: true
+      # How a consumer reaches the credentials: the name of the Kubernetes
+      # Secret holding them, never the values. The chart binds them with a
+      # normal secretKeyRef, so they are injected by Kubernetes at pod start.
+      credentialsSecret:
+        type: string
+      # Fingerprint of those credentials. Rotating them changes this value,
+      # which changes the Connection, which re-reconciles every Release bound
+      # to it — nothing else would notice a Secret-only change.
+      credentialsVersion:
+        type: string
