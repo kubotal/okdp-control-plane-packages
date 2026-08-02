@@ -31,4 +31,7 @@ spec:
       sslMode:
         type: string
         required: true
-        default: require
+        # libpq's own default, and the Control Plane's: try TLS, fall back to
+        # clear text if the server refuses it. A server outside the cluster is
+        # often reachable no other way.
+        default: prefer
