@@ -1,0 +1,29 @@
+{{- /*
+  Contract for a Trino coordinator. Unlike the other contracts it is not
+  user-declarable from the console (the type descriptor marks it external:
+  false): a Trino connection exists because a Trino is deployed, published by
+  the package's own outputs. The contract is still needed so those published
+  connections validate, and so other packages can declare an input against it.
+*/}}
+apiVersion: kubocd.kubotal.io/v1alpha1
+kind: {{ .Values.interfaceKind }}
+metadata:
+  name: trino
+spec:
+  description: Trino distributed SQL query engine
+  schema:
+    type: object
+    properties:
+      host:
+        type: string
+        required: true
+      port:
+        type: integer
+        required: true
+        default: 8080
+      catalog:
+        type: string
+      schema:
+        type: string
+      user:
+        type: string
