@@ -16,7 +16,7 @@
 
 apiVersion: v1alpha1
 name: trino
-tag: 0.4.0-connections
+tag: 0.5.0-unified
 protected: false
 description: |
   Trino distributed SQL query engine with OIDC authentication via Kubauth.
@@ -50,9 +50,9 @@ schema:
         description: "Built-in catalogs to enable (comma-separated)"
         title: "Catalogs | Built-in | | order:1"
       pgConnection:
-        type: string
-        default: ""
-        description: "Name of an existing PostgreSQL connection to expose as the 'warehouse' catalog"
+        type: connectionRef
+        interface: postgresql
+        description: "Existing PostgreSQL connection to expose as the 'warehouse' catalog"
         title: "Catalogs | PostgreSQL connection | | order:2"
   context:
     properties:
@@ -160,13 +160,13 @@ modules:
       env:
         - name: JAVA_TOOL_OPTIONS
           value: "-Djavax.net.ssl.trustStore=/etc/ssl/certs/truststore.p12 -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword="
-        {{- if and .Inputs.warehouse .Inputs.warehouse.credentialsSecret }}
+        {{- if and .Parameters.pgConnection .Parameters.pgConnection.credentialsSecret }}
         # The catalog references this variable (${ENV:...}); the value itself
         # stays in the connection's Secret and never enters a properties file.
         - name: PG_CATALOG_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: "{{ .Inputs.warehouse.credentialsSecret }}"
+              name: "{{ .Parameters.pgConnection.credentialsSecret }}"
               key: password
         {{- end }}
 
@@ -204,38 +204,32 @@ modules:
         {{ trim $cat }}: |
           connector.name={{ trim $cat }}
         {{- end }}
-        {{- if .Inputs.warehouse }}
+        {{- if .Parameters.pgConnection }}
         warehouse: |
           connector.name=postgresql
-          connection-url=jdbc:postgresql://{{ .Inputs.warehouse.host }}:{{ .Inputs.warehouse.port }}/{{ .Inputs.warehouse.database }}?sslmode={{ .Inputs.warehouse.sslMode | default "prefer" }}
-          connection-user={{ .Inputs.warehouse.user }}
-          {{- if .Inputs.warehouse.credentialsSecret }}
+          connection-url=jdbc:postgresql://{{ .Parameters.pgConnection.host }}:{{ .Parameters.pgConnection.port }}/{{ .Parameters.pgConnection.database }}?sslmode={{ .Parameters.pgConnection.sslMode | default "prefer" }}
+          connection-user={{ .Parameters.pgConnection.user }}
+          {{- if .Parameters.pgConnection.credentialsSecret }}
           connection-password=${ENV:PG_CATALOG_PASSWORD}
           {{- end }}
-          # credentials-version={{ .Inputs.warehouse.credentialsVersion | default "none" }} — a
+          # credentials-version={{ .Parameters.pgConnection.credentialsVersion | default "none" }} — a
           # rotation changes this file, so the chart's config checksum rolls the pods.
         {{- end }}
 
-# The connections this package consumes and publishes. The input is optional:
-# a Trino without a PostgreSQL catalog is perfectly valid, so an empty
-# pgConnection parameter resolves to a sentinel no connection can be named
-# after, and the binding is simply skipped.
-inputs:
-  - interface: postgresql
-    alias: warehouse
-    optional: true
-    namedConnection:
-      name: '{{ .Parameters.pgConnection | default "-" }}'
 
 # What this Trino exposes to the rest of the project: its coordinator
 # endpoint, published as a managed Connection other packages can bind.
 outputs:
   - interface: trino
     name: endpoint
+    labels:
+      okdp.io/service: trino
     description: "Trino coordinator ({{ .Release.metadata.name }})"
     values:
       host: "{{ .Release.metadata.name }}-trino-trino.{{ .Release.spec.targetNamespace }}.svc.cluster.local"
-      port: "8080"
+      # Unquoted on purpose: output values round-trip through YAML, so this
+      # stays the integer the trino contract requires.
+      port: 8080
       user: "trino"
 
 roles:
