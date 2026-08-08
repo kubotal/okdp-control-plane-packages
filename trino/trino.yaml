@@ -88,7 +88,7 @@ modules:
       description: "OIDC client for Trino {{ .Release.metadata.name }}"
 
   - name: trino
-    timeout: 10m
+    timeout: 11m
     source:
       helmRepository:
         url: https://trinodb.github.io/charts
@@ -216,7 +216,6 @@ modules:
           # rotation changes this file, so the chart's config checksum rolls the pods.
         {{- end }}
 
-
 # What this Trino exposes to the rest of the project: its coordinator
 # endpoint, published as a managed Connection other packages can bind.
 outputs:
@@ -226,7 +225,8 @@ outputs:
       okdp.io/service: trino
     description: "Trino coordinator ({{ .Release.metadata.name }})"
     values:
-      host: "{{ .Release.metadata.name }}-trino-trino.{{ .Release.spec.targetNamespace }}.svc.cluster.local"
+      host: "{{ .Release.metadata.name }}-trino-trino.{{ .Release.spec.targetNamespace
+        }}.svc.cluster.local"
       # Unquoted on purpose: output values round-trip through YAML, so this
       # stays the integer the trino contract requires.
       port: 8080
